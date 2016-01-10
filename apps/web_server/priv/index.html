@@ -1,0 +1,343 @@
+<html><head><meta http-equiv="Content-Type" content="text/html; charset=windows-1252">
+    <title>Shout it out loud</title>
+    <link href="/static/css/styles.css" rel="stylesheet" type="text/css">
+    <script src="/static/jquery.min.js"></script>
+  <style type="text/css"></style></head>
+  <body>
+    <div id="main">
+            <div id="header">
+                    <h1>
+                            <span id="heading_"></span>
+                            <span id="status"> <span style="color: red;">DISCONNECTED</span></span>
+                            Shout it out loud
+                    </h1>
+            </div>
+            <span id="login">
+                    <hr>
+                    <input id="input_name" >
+                    <button id="b_submit_name" type="button"> login</button>
+            </span>
+
+            <span id="player" style="display: none;">
+                    <hr>
+                    <button type="button" id="b_play">play</button>
+                    <button type="button" id="b_pause">pause</button>
+                    <button type="button" id="b_next">next</button>
+                    <button type="button" id="b_mute">mute</button>
+                    <audio id="audio_sink"
+                            controls=""
+                            preload="none"
+                            autoplay
+                            src=""> </audio>
+            </span>
+
+            <span id="stream_list" style="display: none;">
+                    <hr>
+                    <a id="link_current_stream" title="hint: copy full link and put it in vlc" href=""><h3>Current stream</h3></a>
+                    <table id="stream_table"> <thead></thead> </table>
+            </span>
+
+            <span id="device_list" style="display: none;">
+                    <hr>
+                    <h3>Connected devices</h3>
+                    <table id="device_table"> <thead></thead> </table>
+            </span>
+
+            <span id="user_list" style="display: none;">
+                    <hr>
+                    <h3>Logged in users</h3>
+                    <table id="user_table"> <thead></thead> </table>
+            </span>
+
+            <span id="collection_list" style="display: none;">
+                    <hr>
+                    <h3>Media</h3> <table id="collection_table"> <thead></thead>
+                    </table>
+            </span>
+
+            <div id="authors_info">
+                    <hr>
+                    <p>Why?</p>
+                    <p>Curiosity, practice and I wanted some way to listen from different devices.</p>
+            </div>
+    </div>
+
+  <script>
+var SocketHandler = (function(){
+        var my = {},
+                websocket,
+                shout_ref = 0,
+                user = null;
+
+        my.init = function(my){
+                $('#b_play').click(sendPlay);
+                $('#b_pause').click(sendPause);
+                $('#b_next').click(sendNext);
+                $('#b_mute').click(toggleMute);
+                $('#b_submit_name').click(send_login);
+                connect();
+        };
+        function send_login() {
+                user = document.getElementById('input_name').value;
+                if (null !== user && '' !== user) {
+                        ws_send({ 'login' : user})
+                }
+        };
+
+        function connect() {
+                var ws_addr = 'ws://' + location.host + '/websocket';
+                websocket = new WebSocket(ws_addr);
+                websocket.onopen = function(evt) { onOpen(evt) };
+                websocket.onclose = function(evt) { onClose(evt) };
+                websocket.onmessage = function(evt) { onMessage(evt) };
+        };
+
+        function request_collection_list() { ws_send({ 'user' : user, 'collection' : 'get' }); };
+        function request_stream_list()     { ws_send({ 'user' : user, 'stream'     : 'get' }); };
+        function request_device_list()     { ws_send({ 'user' : user, 'devices'    : 'get' }); };
+        function request_user_list()       { ws_send({ 'users' : 'get' }); };
+
+        function onMessage(evt) {
+                if ("" === evt.data) {
+                        console.log("got empty json from server");
+                        return;
+                }
+                var msg = JSON.parse(evt.data);
+                if (msg.login !== undefined && msg.login === "ack") {
+                        // hide login
+                        document.getElementById('login').style.display = "none";
+                        document.getElementById('heading_').textContent = "[ " + user + " ] " + document.getElementById('heading_').textContent;
+                        // make things visible
+                        document.getElementById('player').style.display = "block";
+                        document.getElementById('stream_list').style.display = "block";
+                        document.getElementById('device_list').style.display = "block";
+                        document.getElementById('collection_list').style.display = "block";
+                        document.getElementById('user_list').style.display = "block";
+                        connect_streamer(msg.shout_ref)
+                        document.getElementById('audio_sink').controls = "";
+                        document.getElementById('link_current_stream').href=get_shout_address(msg.shout_ref);
+                        request_collection_list();
+                        request_stream_list();
+                        request_user_list();
+                        request_device_list();
+
+                        shout_ref = msg.shout_ref;
+                }
+                else if (msg.collection !== undefined) {
+                        update_collection(msg.collection)
+                }
+                else if (msg.stream !== undefined) {
+                        update_stream(msg.stream);
+                }
+                else if (msg.users !== undefined && msg.users.length > 0) {
+                        update_users(msg.users);
+                }
+                else if (msg.listeners !== undefined) {
+                        if (msg.listeners.length == 0) {
+                                connect_streamer(shout_ref);
+                        } else {
+                                update_devices(msg.listeners);
+                        }
+                }
+                else {
+                        console.log(">>" + evt.data + "<<");
+                }
+        };
+
+        function connect_streamer(stream_ref) {
+                document.getElementById('audio_sink').src = get_shout_address(shout_ref);
+        }
+
+        function get_shout_address(shout_ref) {
+                return "/shout/" + shout_ref;
+        };
+
+        function update_devices(devices) {
+                var span = document.getElementById('device_list');
+                var table;
+                var t_body = document.createElement('TBODY');
+                var tr;
+                for (i = 0; i < devices.length; i++) {
+                        tr = document.createElement('TR');
+                        tr.appendChild(val_to_tx(devices[i].ip, 'TD'));
+                        tr.appendChild(val_to_tx(devices[i].user_agent, 'TD'));
+                        t_body.appendChild(tr);
+                }
+                table = create_table('device_table', document.createElement('THEAD'), t_body);
+                span.replaceChild(table, document.getElementById('device_table'));
+        };
+        function update_users(users) {
+                var span = document.getElementById('user_list');
+                var table;
+                var t_body = document.createElement('TBODY');
+                var tr;
+                for (ui = 0; ui < users.length; ui++) {
+                        tr = document.createElement('TR');
+                        tr.appendChild(val_to_tx(users[ui], 'TD'));
+                        t_body.appendChild(tr);
+                }
+                table = create_table('user_table', document.createElement('THEAD'), t_body);
+                span.replaceChild(table, document.getElementById('user_table'));
+        };
+        function update_collection(collection_list) {
+                var t_span = document.getElementById('collection_list');
+                var keys;
+                if (collection_list.length > 0) {
+                        keys = ["add to stream"].concat(Object.keys(collection_list[0].data.id3));
+                }
+                var table = media_list_to_table(
+                                'collection_table',
+                                keys,
+                                add_media_to_stream_button,
+                                collection_list);
+                t_span.replaceChild(table, document.getElementById('collection_table'));
+        };
+        function update_stream(stream_list) {
+                var t_span = document.getElementById('stream_list');
+                //var keys = ["remove"].concat(Object.keys(stream_list[0].data.id3));
+                var table;
+                if (stream_list.length == 0) {
+                        table = create_table('stream_table',
+                                        document.createElement('THEAD'),
+                                        document.createElement('TBODY'))
+                } else {
+                        var keys = Object.keys(stream_list[0].data.id3);
+                        table = media_list_to_table(
+                                        'stream_table',
+                                        keys,
+                                        null, //remove_media_from_stream_button,
+                                        stream_list);
+                }
+                t_span.replaceChild(table, document.getElementById('stream_table'));
+        };
+
+        function create_table(id, header, body) {
+                var table = document.createElement('TABLE');
+                table.id = id;
+                //table.boarder='1';
+                table.appendChild(header);
+                table.appendChild(body);
+                return table;
+        };
+
+        function media_list_to_table(id, headers, button_func, list) {
+                var table_body = document.createElement('TBODY');
+                var table = create_table(
+                                id,
+                                media_table_head(headers),
+                                table_body);
+                var ref, id3, btn, tr;
+                for (var i=0; i < list.length; i++) {
+                        ref = list[i].ref;
+                        id3 = list[i].data.id3;
+                        if (button_func !== null)
+                                btn = button_func(ref);
+                        else
+                                btn = null
+                        var tr = media_to_table_row(btn, id3);
+                        table_body.appendChild(tr);
+                }
+                return table;
+        };
+        function val_to_tx(val, type) {
+                var d = document.createElement(type);
+                d.appendChild(document.createTextNode(val));
+                return d;
+        };
+        function skip_field(field) {
+                if ( field === "genre") {
+                        return true;
+                }
+                else if ( field === "comment") {
+                        return true;
+                }
+                return false;
+        };
+        function media_table_head(labels) {
+                var tr = document.createElement('TR');
+                for (key in labels) {
+                        if (skip_field(labels[key]))
+                                continue;
+                        var th = val_to_tx(labels[key], 'TH');
+                        tr.appendChild(th);
+                }
+                return tr;
+        };
+
+        function media_to_table_row(btn, id3) {
+                var tr = document.createElement('TR');
+                if (btn !== null)
+                        tr.appendChild(document.createElement('TD').appendChild(btn));
+                for (key in id3) {
+                        if (skip_field(key))  // TODO, side-affect!! make fields to skip in-data
+                                continue;
+                        tr.appendChild(val_to_tx(id3[key], 'TD'));
+                }
+                return tr;
+        };
+
+        function make_button(func, label) {
+                var btn = document.createElement('BUTTON');
+                btn.onclick = func;
+                btn.appendChild(document.createTextNode(label));
+                return btn;
+        };
+        function remove_media_from_stream_button(media_id) {
+                var f = function() {
+                        ws_send({'user' : user, 'stream' : {'remove' : media_id}});
+                        request_stream_list();
+                };
+                return make_button(f, "X");
+        };
+        function add_media_to_stream_button(media_id) {
+                var f = function() {
+                        ws_send({'user' : user, 'stream' : {'add' : media_id}});
+                        request_stream_list();
+                };
+                return make_button(f, "add");
+        };
+
+        function ws_send(msg) { websocket.send(JSON.stringify(msg)); };
+        function sendCtrl(val) {
+                message = { 'user' : user, 'ws_ctrl' : val };
+                ws_send(message);
+        };
+
+
+        function sendPlay(){
+                sendCtrl('play');
+                document.getElementById('audio_sink').play();
+        };
+        function sendPause(){
+                document.getElementById('audio_sink').pause();
+                sendCtrl('pause');
+        };
+        function sendNext(){
+                sendCtrl('next');
+                document.getElementById('audio_sink').currentTime = 0;
+                document.getElementById('audio_sink').load();
+        };
+        function toggleMute(){
+                var audio = document.getElementById('audio_sink');
+                if (audio.muted) {
+                        audio.muted = false;
+                        document.getElementById('b_mute').textContent = "mute";
+                } else {
+                        audio.muted = true;
+                        document.getElementById('b_mute').textContent = "unmute";
+                }
+        };
+
+        function disconnect() { websocket.close(); };
+        function onOpen(evt)  { updateStatus('<span style="color: green;">[ CONNECTED ] </span>'); };
+        function onClose(evt) { updateStatus('<span style="color: red;">[ DISCONNECTED ] </span>'); };
+
+        function updateStatus(txt) { $('#status').html(txt); };
+
+        return my;
+}());
+SocketHandler.init(SocketHandler.my);
+  </script>
+
+
+</body></html>

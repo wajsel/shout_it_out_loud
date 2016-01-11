@@ -2,7 +2,7 @@ defmodule Media do
   use Application
 
   #TODO: base_media_dir should be moved to shouter_app
-  @base_media_dir "/Users/wiesel/sandbox/shouter_elixir/data/kiss"
+  @base_media_dir "data/"
   @ets_media_storage_name Media.Collection
   @stream_sup_name        Media.StreamSup
   @stream_server_name     Media.StreamServer
@@ -42,7 +42,7 @@ defmodule Media.Collection do
 
   def mine_dir(me \\ __MODULE__, dir, recursive) do
     Logger.debug "#{inspect me}, mine dir:#{inspect dir}"
-    GenServer.call(me, {:mine, Path.absname(dir), recursive})
+    GenServer.call(me, {:mine, Path.absname(dir), recursive}, 10000)
   end
 
   def list(me \\ __MODULE__) do

@@ -98,6 +98,8 @@ defmodule Media.Collection do
 end
 # ============================================================================ #
 defmodule Media.Mp3 do
+  require Logger
+
   def id3(file_path_name) do
     case File.read(file_path_name) do
       {:ok, bin}   -> read_id3(bin)
@@ -113,7 +115,7 @@ defmodule Media.Mp3 do
   end
 
   def get_bitrate(file_path_name) do
-    cmd = "afinfo " <> "'" <> file_path_name <> "'"
+    cmd = "file " <> "\"" <> file_path_name <> "\""
     case get_bitrate_retries(cmd, 5) do
       {:ok, bitrate} -> bitrate
       :error         -> 0
@@ -124,11 +126,17 @@ defmodule Media.Mp3 do
   defp get_bitrate_retries(cmd, retries) do
     case Media.Console.execute(cmd) do
       {:data, str} ->
-        [["bit", "rate:", bitrate_str | _]] =
-          String.split(str, "\n", trim: true)
-            |> Enum.filter(&String.contains?(&1, "bit rate:"))
+        Logger.info "#{inspect str}"
+        b =
+          String.split(str, ",", trim: true)
+            |> Enum.filter(&String.contains?(&1, " kbps"))
             |> Enum.map(&String.split(&1, " ", trim: true))
-        {:ok, String.to_integer bitrate_str}
+
+        Logger.info "#{inspect b}"
+        [[bitrate_str, "kbps"]] = b
+        Logger.info "#{inspect bitrate_str}"
+        Logger.info "#{inspect str}"
+        {:ok, String.to_integer(bitrate_str)}
       {:error, _e} ->
         get_bitrate_retries(cmd, retries - 1)
     end
@@ -385,6 +393,8 @@ defmodule Media.Streamer do
             :shout_rate => @initial_shout_rate}}
   end
 
+  def handle_call(:debug, _from, state), do: {:reply, state, state}
+
   def handle_call(:stream_info, _from, state), do:
     {:reply, {:ok, {@chunk_size, state.current_bitrate, state.current_id3}}, state}
 
@@ -511,7 +521,11 @@ defmodule Media.Streamer do
   # -------------------------------------------------------------------------- #
   #TODO make bump_shout calculate time to next shout depending on time since last shout
   defp bump_shout(delay) do
-    {:ok, _tref} = :timer.send_after(delay, :time_to_shout)
+    if delay > 0 do
+      {:ok, _tref} = :timer.send_after(delay, :time_to_shout)
+    else
+      {:error, {:invalid_delay, delay}}
+    end
   end
 
   defp shout(subscribers, chunk) do
@@ -543,12 +557,15 @@ defmodule Media.Streamer do
   defp process_ref(song_ref, chunk_size) do
     [{^song_ref, %{:path => f_name}}] = Media.Collection.lookup(song_ref)
     case Media.Mp3.get_bitrate f_name do
-      0       ->
-        {0, 0, %{}, []}
+      0       -> {0, 0, %{}, []}
       bitrate ->
-        shout_rate = round((chunk_size * 8 ) / (bitrate/1000) - @send_chunk_latency)
         {:ok, id3} = Media.Mp3.id3(f_name)
-        {shout_rate, round(bitrate/1000), id3, Media.Mp3.chunk_up(f_name, chunk_size)}
+        shout_rate = round(chunk_size * 8  / bitrate) - @send_chunk_latency
+        if shout_rate > 0 do
+          {shout_rate, round(bitrate), id3, Media.Mp3.chunk_up(f_name, chunk_size)}
+        else
+          {0, round(bitrate), id3, Media.Mp3.chunk_up(f_name, chunk_size)}
+        end
     end
   end
 

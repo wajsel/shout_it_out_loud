@@ -13,7 +13,7 @@ defmodule WebServer do
     dispatch = :cowboy_router.compile([
       { :_,
         [ {"/", :cowboy_static, {:priv_file, :web_server, "index.html"}},
-          {"/static/[...]", :cowboy_static, {:priv_dir, :web_server, "static_files"}},
+          {"/static/[...]", :cowboy_static, {:priv_dir, :web_server, "static"}},
           {"/shout/:id", IcyHandler, []},
           {"/websocket", WebsocketHandler, []}
         ]}
